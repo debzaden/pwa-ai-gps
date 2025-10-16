@@ -1,13 +1,16 @@
 // src/pages/CheckInPage.jsx
 import React, { useState, useEffect, useRef } from 'react';
-import { Container, Typography, Button, Box, CircularProgress, Alert } from '@mui/material';
+import { Container, Typography, Button, Box, CircularProgress, Alert, Stack } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import apiClient from '../api/axiosConfig';
 
 function CheckInPage() {
-  const [configMethod, setConfigMethod] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
+  // State mới để lưu trạng thái của cả 2 phương thức
+  const [config, setConfig] = useState({ face_enabled: false, gps_enabled: false });
+  const [isLoading, setIsLoading] = useState(true); // Bật loading lúc đầu
+  const [isCheckingIn, setIsCheckingIn] = useState(false); // State loading riêng cho việc điểm danh
   const [message, setMessage] = useState({ type: '', text: '' });
+  
   const navigate = useNavigate();
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -15,28 +18,30 @@ function CheckInPage() {
   // Lấy cấu hình điểm danh khi component được tải
   useEffect(() => {
     const fetchConfig = async () => {
+      setIsLoading(true);
       try {
         const token = localStorage.getItem('accessToken');
         if (!token) {
           navigate('/login');
           return;
         }
-        // Gắn token vào header cho các yêu cầu sau
         apiClient.defaults.headers.common['Authorization'] = `Bearer ${token}`;
         
         const response = await apiClient.get('/config/method/');
-        setConfigMethod(response.data.active_method);
+        setConfig(response.data); // Lưu cả object cấu hình
       } catch (error) {
         console.error('Không thể lấy cấu hình:', error);
         setMessage({ type: 'error', text: 'Lỗi kết nối đến server.' });
+      } finally {
+        setIsLoading(false);
       }
     };
     fetchConfig();
   }, [navigate]);
 
-  // Khởi động camera nếu phương thức là 'face'
+  // Khởi động camera nếu phương thức 'face' được bật
   useEffect(() => {
-    if (configMethod === 'face') {
+    if (config.face_enabled) {
       const startCamera = async () => {
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -50,40 +55,39 @@ function CheckInPage() {
       };
       startCamera();
 
-      // Dọn dẹp: Tắt camera khi component bị unmount
       return () => {
         if (videoRef.current && videoRef.current.srcObject) {
           videoRef.current.srcObject.getTracks().forEach(track => track.stop());
         }
       };
     }
-  }, [configMethod]);
-
+  }, [config.face_enabled]);
 
   const handleGpsCheckIn = () => {
-    setIsLoading(true);
+    setIsCheckingIn(true);
     setMessage({ type: '', text: '' });
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         try {
           const { latitude, longitude } = position.coords;
-          const response = await apiClient.post('/attendance/check-in/', { latitude, longitude });
+          // Gửi kèm 'method'
+          const response = await apiClient.post('/attendance/check-in/', { method: 'gps', latitude, longitude });
           setMessage({ type: 'success', text: response.data.message });
         } catch (error) {
           setMessage({ type: 'error', text: error.response?.data?.message || 'Điểm danh GPS thất bại.' });
         } finally {
-          setIsLoading(false);
+          setIsCheckingIn(false);
         }
       },
-      (error) => {
+      (_error) => {
         setMessage({ type: 'error', text: 'Không thể lấy vị trí GPS.' });
-        setIsLoading(false);
+        setIsCheckingIn(false);
       }
     );
   };
 
   const handleFaceCheckIn = async () => {
-    setIsLoading(true);
+    setIsCheckingIn(true);
     setMessage({ type: '', text: '' });
     if (videoRef.current && canvasRef.current) {
       const video = videoRef.current;
@@ -92,53 +96,22 @@ function CheckInPage() {
       canvas.height = video.videoHeight;
       canvas.getContext('2d').drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
       
-      // Chuyển ảnh từ canvas sang dạng base64
       const imageData = canvas.toDataURL('image/jpeg');
 
       try {
-        const response = await apiClient.post('/attendance/check-in/', { image: imageData });
+        // Gửi kèm 'method'
+        const response = await apiClient.post('/attendance/check-in/', { method: 'face', image: imageData });
         setMessage({ type: 'success', text: response.data.message });
       } catch (error) {
         setMessage({ type: 'error', text: error.response?.data?.message || 'Điểm danh khuôn mặt thất bại.' });
       } finally {
-        setIsLoading(false);
+        setIsCheckingIn(false);
       }
     }
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('accessToken');
-    localStorage.removeItem('refreshToken');
-    apiClient.defaults.headers.common['Authorization'] = null;
-    navigate('/login');
-  };
-
-  const renderCheckInUI = () => {
-    if (!configMethod) {
-      return <CircularProgress />;
-    }
-
-    if (configMethod === 'face') {
-      return (
-        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', maxWidth: '400px', border: '1px solid #ccc' }} />
-          <canvas ref={canvasRef} style={{ display: 'none' }} />
-          <Button variant="contained" onClick={handleFaceCheckIn} disabled={isLoading} sx={{ mt: 2 }}>
-            Điểm danh bằng khuôn mặt
-          </Button>
-        </Box>
-      );
-    }
-
-    if (configMethod === 'gps') {
-      return (
-        <Button variant="contained" onClick={handleGpsCheckIn} disabled={isLoading}>
-          Điểm danh bằng GPS
-        </Button>
-      );
-    }
-
-    return null;
+    // ... (giữ nguyên logic logout)
   };
 
   return (
@@ -150,9 +123,36 @@ function CheckInPage() {
 
         {message.text && <Alert severity={message.type} sx={{ mb: 2 }}>{message.text}</Alert>}
 
-        <Box sx={{ my: 4 }}>
-          {isLoading ? <CircularProgress /> : renderCheckInUI()}
-        </Box>
+        {isLoading ? (
+          <CircularProgress />
+        ) : (
+          <Box sx={{ my: 4, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+            {isCheckingIn && <CircularProgress />}
+            
+            {/* Hiển thị camera nếu điểm danh khuôn mặt được bật */}
+            {config.face_enabled && (
+              <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', maxWidth: '400px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                <canvas ref={canvasRef} style={{ display: 'none' }} />
+                <Button variant="contained" onClick={handleFaceCheckIn} disabled={isCheckingIn} sx={{ mt: 2 }}>
+                  Điểm danh bằng khuôn mặt
+                </Button>
+              </Box>
+            )}
+
+            {/* Hiển thị nút GPS nếu điểm danh GPS được bật */}
+            {config.gps_enabled && (
+              <Button variant="contained" onClick={handleGpsCheckIn} disabled={isCheckingIn}>
+                Điểm danh bằng GPS
+              </Button>
+            )}
+
+            {!config.face_enabled && !config.gps_enabled && (
+                <Typography>Chưa có phương thức điểm danh nào được bật.</Typography>
+            )}
+
+          </Box>
+        )}
 
         <Button variant="outlined" color="error" onClick={handleLogout}>
           Đăng xuất
