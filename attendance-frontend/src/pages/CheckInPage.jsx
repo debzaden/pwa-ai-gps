@@ -1,12 +1,15 @@
 // src/pages/CheckInPage.jsx
 import React, { useState, useEffect, useRef } from 'react';
-import { Container, Typography, Button, Box, CircularProgress, Alert, Stack } from '@mui/material';
-import { useNavigate } from 'react-router-dom';
+// Thêm useParams để đọc ID từ URL
+import { Container, Typography, Button, Box, CircularProgress, Alert } from '@mui/material';
+import { useNavigate, useParams } from 'react-router-dom';
 import apiClient from '../api/axiosConfig';
 
 function CheckInPage() {
+  const { courseId } = useParams();
+  console.log("Course ID từ URL:", courseId);
   // State mới để lưu trạng thái của cả 2 phương thức
-  const [config, setConfig] = useState({ face_enabled: false, gps_enabled: false });
+const [config, setConfig] = useState({ face_enabled: false, gps_enabled: false });
   const [isLoading, setIsLoading] = useState(true); // Bật loading lúc đầu
   const [isCheckingIn, setIsCheckingIn] = useState(false); // State loading riêng cho việc điểm danh
   const [message, setMessage] = useState({ type: '', text: '' });
@@ -70,8 +73,13 @@ function CheckInPage() {
       async (position) => {
         try {
           const { latitude, longitude } = position.coords;
-          // Gửi kèm 'method'
-          const response = await apiClient.post('/attendance/check-in/', { method: 'gps', latitude, longitude });
+          // Thêm 'course_section_id' vào request body
+          const response = await apiClient.post('/attendance/check-in/', { 
+          course_section_id: courseId, 
+          method: 'gps', 
+          latitude, 
+          longitude
+          });
           setMessage({ type: 'success', text: response.data.message });
         } catch (error) {
           setMessage({ type: 'error', text: error.response?.data?.message || 'Điểm danh GPS thất bại.' });
@@ -100,7 +108,12 @@ function CheckInPage() {
 
       try {
         // Gửi kèm 'method'
-        const response = await apiClient.post('/attendance/check-in/', { method: 'face', image: imageData });
+        // Thêm 'course_section_id' vào request body
+        const response = await apiClient.post('/attendance/check-in/', { 
+          course_section_id: courseId, 
+          method: 'face', 
+          image: imageData 
+        });
         setMessage({ type: 'success', text: response.data.message });
       } catch (error) {
         setMessage({ type: 'error', text: error.response?.data?.message || 'Điểm danh khuôn mặt thất bại.' });
@@ -110,15 +123,23 @@ function CheckInPage() {
     }
   };
 
-  const handleLogout = () => {
-    // ... (giữ nguyên logic logout)
-  };
+const handleLogout = () => {
+  // 1. Xóa token khỏi localStorage của trình duyệt
+  localStorage.removeItem('accessToken');
+  localStorage.removeItem('refreshToken');
+
+  // 2. Xóa token khỏi header mặc định của axios để các yêu cầu sau không còn token nữa
+  apiClient.defaults.headers.common['Authorization'] = null;
+
+  // 3. Chuyển hướng người dùng về trang đăng nhập
+  navigate('/login');
+};
 
   return (
     <Container>
       <Box sx={{ marginTop: 4, textAlign: 'center' }}>
         <Typography variant="h4" gutterBottom>
-          Trang Điểm Danh
+          Điểm danh cho Lớp #{courseId}
         </Typography>
 
         {message.text && <Alert severity={message.type} sx={{ mb: 2 }}>{message.text}</Alert>}
